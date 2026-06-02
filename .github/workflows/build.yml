@@ -53,7 +53,7 @@ jobs:
         TWEAK_NAME := MomoTweak
 
         MomoTweak_FILES := Tweak.x
-        MomoTweak_CFLAGS := -fobjc-arc
+        MomoTweak_CFLAGS := -fobjc-arc -Wno-error
 
         include $(THEOS)/makefiles/tweak.mk
         EOF
@@ -64,17 +64,20 @@ jobs:
         { Filter = { Bundles = ( "com.immomo.momo" ); }; }
         EOF
 
-    - name: 8. 强行重写 Tweak.x 核心源码（带 UI 悬浮图标）
+    - name: 8. 强行重写 Tweak.x 核心源码（全兼容 UI 图标版）
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
+
+        @interface MDXmppServiceManager : NSObject
+        - (void)initMomoFloatingButton;
+        @end
 
         %hook MDXmppServiceManager
 
         - (id)init {
             id original = %orig;
             if (original) {
-                // 延迟 2 秒，等待 App 主 UI 线程就绪后再画图标
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                     [self initMomoFloatingButton];
                 });
@@ -84,7 +87,7 @@ jobs:
 
         %new
         - (void)initMomoFloatingButton {
-            UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+            UIWindow *keyWindow = [[[UIApplication sharedApplication] windows] firstObject];
             if (!keyWindow) return;
             
             UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -96,7 +99,7 @@ jobs:
             
             [keyWindow addSubview:btn];
             [keyWindow bringSubviewToFront:btn];
-            NSLog(@"[MomoTweak] 图标已成功挂载到屏幕上！");
+            NSLog(@"[MomoTweak] 图标已成功挂载！");
         }
 
         %end
