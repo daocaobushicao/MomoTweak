@@ -24,13 +24,22 @@ jobs:
         cp -r $HOME/theos/sdks-repo/iPhoneOS13.6.sdk $HOME/theos/sdks/
         rm -rf $HOME/theos/sdks-repo
 
-    - name: 4. 绑定环境变量并执行原生 Mac 打包
+    - name: 4. 暴力修复并洗白本地 Makefile 配置
+      run: |
+        # 强行删除可能导致 Mac 崩溃的本地 Windows 残留声明
+        sed -i '' '/_cache_/d' Makefile || true
+        sed -i '' '/make.exe/d' Makefile || true
+        # 确保 Makefile 拥有标准的交叉编译架构声明
+        echo "ARCHS = arm64 arm64e" >> Makefile
+        echo "TARGET = iphone:clang:13.6:13.0" >> Makefile
+
+    - name: 5. 绑定全局变量并执行原生 Mac 打包
       run: |
         export THEOS=$HOME/theos
         export PATH=$THEOS/bin:$PATH
         make package FINALPACKAGE=1
         
-    - name: 5. 提炼成品 .deb 并上传
+    - name: 6. 提炼成品 .deb 并上传
       uses: actions/upload-artifact@v4
       with:
         name: MomoTweak-Release-Deb
