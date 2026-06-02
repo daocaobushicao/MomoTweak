@@ -2,7 +2,7 @@ name: iOS Tweak Build
 
 on:
   push:
-    branches: [ "*" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -10,24 +10,27 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - name: Checkout Project
+    - name: 1. 检出用户代码
       uses: actions/checkout@v4
 
-    - name: Setup Theos 环境
-      uses: theos/setup-theos@v1
-      with:
-        theos-src: https://github.com/theos/theos.git
-
-    - name: 塞入 13.6 SDK
+    - name: 2. 自动化配置标准的 Theos 全套环境
       run: |
-        git clone https://github.com/theos/sdks.git $THEOS/sdks-repo
-        cp -r $THEOS/sdks-repo/iPhoneOS13.6.sdk $THEOS/sdks/
-
-    - name: 开始云端极速打包
+        git clone --recursive https://github.com/theos/theos.git $HOME/theos
+        
+    - name: 3. 精准注入 13.6 SDK
       run: |
+        git clone https://github.com/theos/sdks.git $HOME/theos/sdks-repo
+        mkdir -p $HOME/theos/sdks
+        cp -r $HOME/theos/sdks-repo/iPhoneOS13.6.sdk $HOME/theos/sdks/
+        rm -rf $HOME/theos/sdks-repo
+
+    - name: 4. 绑定环境变量并执行原生 Mac 打包
+      run: |
+        export THEOS=$HOME/theos
+        export PATH=$THEOS/bin:$PATH
         make package FINALPACKAGE=1
-
-    - name: 导出成品 .deb 文件
+        
+    - name: 5. 提炼成品 .deb 并上传
       uses: actions/upload-artifact@v4
       with:
         name: MomoTweak-Release-Deb
