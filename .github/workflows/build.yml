@@ -24,7 +24,7 @@ jobs:
         cp -r $HOME/theos/sdks-repo/iPhoneOS14.5.sdk $HOME/theos/sdks/
         rm -rf $HOME/theos/sdks-repo
 
-    - name: 4. 核心补丁：强行安装 Mac 越狱签名工具 ldid
+    - name: 4. 强行安装 Mac 越狱签名工具 ldid
       run: |
         brew install ldid
 
@@ -58,9 +58,9 @@ jobs:
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
-    - name: 7. 云端强行重写 MomoFloatingButton.plist 注入声明
+    - name: 7. 【核心修复】云端强行重写 MomoTweak.plist 注入声明（必须与 TWEAK_NAME 严格对齐）
       run: |
-        cat << 'EOF' > MomoFloatingButton.plist
+        cat << 'EOF' > MomoTweak.plist
         { Filter = { Bundles = ( "com.immomo.momo" ); }; }
         EOF
 
@@ -74,7 +74,7 @@ jobs:
         - (id)init {
             id original = %orig;
             if (original) {
-                NSLog(@"[大沙雕通知] MomoTweak 注入成功！核心管理类 MDXmppServiceManager 成功挂载！");
+                NSLog(@"[MomoTweak] 核心管理类 MDXmppServiceManager 成功挂载！");
             }
             return original;
         }
