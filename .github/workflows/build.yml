@@ -17,11 +17,11 @@ jobs:
       run: |
         git clone --recursive https://github.com/theos/theos.git $HOME/theos
         
-    - name: 3. 精准注入 13.6 SDK
+    - name: 3. 精准注入 14.5 SDK（官方绝对存在，完美向下兼容）
       run: |
         git clone https://github.com/theos/sdks.git $HOME/theos/sdks-repo
         mkdir -p $HOME/theos/sdks
-        cp -r $HOME/theos/sdks-repo/iPhoneOS13.6.sdk $HOME/theos/sdks/
+        cp -r $HOME/theos/sdks-repo/iPhoneOS14.5.sdk $HOME/theos/sdks/
         rm -rf $HOME/theos/sdks-repo
 
     - name: 4. 云端强行重写 control 配置文件
@@ -65,7 +65,6 @@ jobs:
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
 
-        // 声明我们要 Hook 的 Momo 核心主控类（根据你之前的逆向结构对齐）
         @interface MDXmppServiceManager : NSObject
         @property (nonatomic, strong) UIButton *myFloatingButton;
         - (void)initMomoFloatingButton;
@@ -73,11 +72,9 @@ jobs:
 
         %hook MDXmppServiceManager
 
-        // 在初始化或者核心入口处注入我们的浮窗
         - (id)init {
             id original = %orig;
             if (original) {
-                // 延迟一小会儿确保 UI 线程准备就绪，防止闪退
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                     [self initMomoFloatingButton];
                 });
@@ -87,14 +84,12 @@ jobs:
 
         %new
         - (void)initMomoFloatingButton {
-            // 如果已经存在按钮，不再重复创建
             if (self.myFloatingButton) return;
             
-            // 1. 创建全局悬浮按钮
             self.myFloatingButton = [UIButton buttonWithType:UIButtonTypeCustom];
-            self.myFloatingButton.frame = CGRectMake(20, 150, 60, 60); // 初始坐标
+            self.myFloatingButton.frame = CGRectMake(20, 150, 60, 60);
             self.myFloatingButton.layer.cornerRadius = 30;
-            self.myFloatingButton.backgroundColor = [UIColor colorWithRed:1.0 green:0.4 blue:0.0 alpha:0.8]; // 亮眼橙色
+            self.myFloatingButton.backgroundColor = [UIColor colorWithRed:1.0 green:0.4 blue:0.0 alpha:0.8];
             [self.myFloatingButton setTitle:@"Momo" forState:UIControlStateNormal];
             self.myFloatingButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
             self.myFloatingButton.layer.shadowColor = [UIColor blackColor].CGColor;
@@ -102,10 +97,8 @@ jobs:
             self.myFloatingButton.layer.shadowOpacity = 0.3;
             self.myFloatingButton.layer.shadowRadius = 4;
             
-            // 2. 绑定点击事件
             [self.myFloatingButton addTarget:self action:@selector(floatingButtonClick) forControlEvents:UIControlEventTouchUpInside];
             
-            // 3. 强行置顶挂载到当前最上层的 Windows 窗口上
             UIWindow *keyWindow = nil;
             if (@available(iOS 13.0, *)) {
                 for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -126,13 +119,11 @@ jobs:
             if (keyWindow) {
                 [keyWindow addSubview:self.myFloatingButton];
                 [keyWindow bringSubviewToFront:self.myFloatingButton];
-                NSLog(@"[MomoTweak] 悬浮窗已成功注入最上层 Window！");
             }
         }
 
         %new
         - (void)floatingButtonClick {
-            // 弹窗测试逻辑，点击直接亮相
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Momo 助手" 
                                                                            message:@"云端极速出包测试成功！面板准备就绪。" 
                                                                     preferredStyle:UIAlertControllerStyleAlert];
