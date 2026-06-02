@@ -10,7 +10,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - name: 1. 检出用户代码
+    - name: 1. 检出代码
       uses: actions/checkout@v4
 
     - name: 2. 自动化配置标准的 Theos 全套环境
@@ -24,19 +24,134 @@ jobs:
         cp -r $HOME/theos/sdks-repo/iPhoneOS13.6.sdk $HOME/theos/sdks/
         rm -rf $HOME/theos/sdks-repo
 
-    - name: 4. 确保 Makefile 拥有标准的交叉编译架构声明
+    - name: 4. 云端强行重写 control 配置文件
       run: |
-        # 用 sed 替换已有的 ARCHS 和 TARGET 行，而不是追加
-        sed -i '' 's/^ARCHS :=.*$/ARCHS = arm64 arm64e/' Makefile || true
-        sed -i '' 's/^TARGET :=.*$/TARGET = iphone:clang:13.6:13.0/' Makefile || true
+        cat << 'EOF' > control
+        Package: com.yourcompany.momotweak
+        Name: MomoTweak
+        Depends: mobilesubstrate
+        Version: 0.0.1
+        Architecture: iphoneos-arm
+        Description: An awesome iOS Tweak for Momo
+        Maintainer: daocaobushicao
+        Author: daocaobushicao
+        EOF
 
-    - name: 5. 绑定全局变量并执行原生 Mac 打包
+    - name: 5. 云端强行重写 Makefile 编译规则
+      run: |
+        cat << 'EOF' > Makefile
+        TARGET := iphone:clang:latest:13.0
+        INSTALL_TARGET_PROCESSES := Momo
+        ARCHS = arm64 arm64e
+
+        include $(THEOS)/makefiles/common.mk
+
+        TWEAK_NAME := MomoTweak
+
+        MomoTweak_FILES := Tweak.x
+        MomoTweak_CFLAGS := -fobjc-arc
+
+        include $(THEOS)/makefiles/tweak.mk
+        EOF
+
+    - name: 6. 云端强行重写 MomoFloatingButton.plist 注入声明
+      run: |
+        cat << 'EOF' > MomoFloatingButton.plist
+        { Filter = { Bundles = ( "com.immomo.momo" ); }; }
+        EOF
+
+    - name: 7. 云端强行重写 Tweak.x 核心源码
+      run: |
+        cat << 'EOF' > Tweak.x
+        #import <UIKit/UIKit.h>
+
+        // 声明我们要 Hook 的 Momo 核心主控类（根据你之前的逆向结构对齐）
+        @interface MDXmppServiceManager : NSObject
+        @property (nonatomic, strong) UIButton *myFloatingButton;
+        - (void)initMomoFloatingButton;
+        @end
+
+        %hook MDXmppServiceManager
+
+        // 在初始化或者核心入口处注入我们的浮窗
+        - (id)init {
+            id original = %orig;
+            if (original) {
+                // 延迟一小会儿确保 UI 线程准备就绪，防止闪退
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    [self initMomoFloatingButton];
+                });
+            }
+            return original;
+        }
+
+        %new
+        - (void)initMomoFloatingButton {
+            // 如果已经存在按钮，不再重复创建
+            if (self.myFloatingButton) return;
+            
+            // 1. 创建全局悬浮按钮
+            self.myFloatingButton = [UIButton buttonWithType:UIButtonTypeCustom];
+            self.myFloatingButton.frame = CGRectMake(20, 150, 60, 60); // 初始坐标
+            self.myFloatingButton.layer.cornerRadius = 30;
+            self.myFloatingButton.backgroundColor = [UIColor colorWithRed:1.0 green:0.4 blue:0.0 alpha:0.8]; // 亮眼橙色
+            [self.myFloatingButton setTitle:@"Momo" forState:UIControlStateNormal];
+            self.myFloatingButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+            self.myFloatingButton.layer.shadowColor = [UIColor blackColor].CGColor;
+            self.myFloatingButton.layer.shadowOffset = CGSizeMake(0, 2);
+            self.myFloatingButton.layer.shadowOpacity = 0.3;
+            self.myFloatingButton.layer.shadowRadius = 4;
+            
+            // 2. 绑定点击事件
+            [self.myFloatingButton addTarget:self action:@selector(floatingButtonClick) forControlEvents:UIControlEventTouchUpInside];
+            
+            // 3. 强行置顶挂载到当前最上层的 Windows 窗口上
+            UIWindow *keyWindow = nil;
+            if (@available(iOS 13.0, *)) {
+                for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                    if (scene.activationState == UISceneActivationStateForegroundActive) {
+                        for (UIWindow *window in scene.windows) {
+                            if (window.isKeyWindow) {
+                                keyWindow = window;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!keyWindow) {
+                keyWindow = [UIApplication sharedApplication].keyWindow;
+            }
+            
+            if (keyWindow) {
+                [keyWindow addSubview:self.myFloatingButton];
+                [keyWindow bringSubviewToFront:self.myFloatingButton];
+                NSLog(@"[MomoTweak] 悬浮窗已成功注入最上层 Window！");
+            }
+        }
+
+        %new
+        - (void)floatingButtonClick {
+            // 弹窗测试逻辑，点击直接亮相
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Momo 助手" 
+                                                                           message:@"云端极速出包测试成功！面板准备就绪。" 
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+            UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil];
+            [alert addAction:okAction];
+            
+            [[UIApplication sharedApplication].keyWindow.rootViewController presentViewController:alert animated:YES completion:nil];
+        }
+
+        %end
+        EOF
+
+    - name: 8. 执行原生 Mac 终极打包
       run: |
         export THEOS=$HOME/theos
         export PATH=$THEOS/bin:$PATH
         make package FINALPACKAGE=1
         
-    - name: 6. 提炼成品 .deb 并上传
+    - name: 9. 提炼成品 .deb 并上传
       uses: actions/upload-artifact@v4
       with:
         name: MomoTweak-Release-Deb
