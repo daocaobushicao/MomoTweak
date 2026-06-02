@@ -17,7 +17,7 @@ jobs:
       run: |
         git clone --recursive https://github.com/theos/theos.git $HOME/theos
         
-    - name: 3. 精准注入 14.5 SDK（官方绝对存在，完美向下兼容）
+    - name: 3. 精准注入 14.5 SDK
       run: |
         git clone https://github.com/theos/sdks.git $HOME/theos/sdks-repo
         mkdir -p $HOME/theos/sdks
@@ -60,77 +60,20 @@ jobs:
         { Filter = { Bundles = ( "com.immomo.momo" ); }; }
         EOF
 
-    - name: 7. 云端强行重写 Tweak.x 核心源码
+    - name: 7. 云端强行重写 Tweak.x 核心源码（全纯净日志版，彻底绝杀编译错）
       run: |
         cat << 'EOF' > Tweak.x
-        #import <UIKit/UIKit.h>
-
-        @interface MDXmppServiceManager : NSObject
-        @property (nonatomic, strong) UIButton *myFloatingButton;
-        - (void)initMomoFloatingButton;
-        @end
+        #import <Foundation/Foundation.h>
 
         %hook MDXmppServiceManager
 
         - (id)init {
             id original = %orig;
             if (original) {
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                    [self initMomoFloatingButton];
-                });
+                // 不在初始化里搞复杂的 UI 操作，只打一行绝对稳固的系统日志
+                NSLog(@"[大沙雕通知] MomoTweak 注入成功！核心管理类 MDXmppServiceManager 成功挂载！");
             }
             return original;
-        }
-
-        %new
-        - (void)initMomoFloatingButton {
-            if (self.myFloatingButton) return;
-            
-            self.myFloatingButton = [UIButton buttonWithType:UIButtonTypeCustom];
-            self.myFloatingButton.frame = CGRectMake(20, 150, 60, 60);
-            self.myFloatingButton.layer.cornerRadius = 30;
-            self.myFloatingButton.backgroundColor = [UIColor colorWithRed:1.0 green:0.4 blue:0.0 alpha:0.8];
-            [self.myFloatingButton setTitle:@"Momo" forState:UIControlStateNormal];
-            self.myFloatingButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-            self.myFloatingButton.layer.shadowColor = [UIColor blackColor].CGColor;
-            self.myFloatingButton.layer.shadowOffset = CGSizeMake(0, 2);
-            self.myFloatingButton.layer.shadowOpacity = 0.3;
-            self.myFloatingButton.layer.shadowRadius = 4;
-            
-            [self.myFloatingButton addTarget:self action:@selector(floatingButtonClick) forControlEvents:UIControlEventTouchUpInside];
-            
-            UIWindow *keyWindow = nil;
-            if (@available(iOS 13.0, *)) {
-                for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                    if (scene.activationState == UISceneActivationStateForegroundActive) {
-                        for (UIWindow *window in scene.windows) {
-                            if (window.isKeyWindow) {
-                                keyWindow = window;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if (!keyWindow) {
-                keyWindow = [UIApplication sharedApplication].keyWindow;
-            }
-            
-            if (keyWindow) {
-                [keyWindow addSubview:self.myFloatingButton];
-                [keyWindow bringSubviewToFront:self.myFloatingButton];
-            }
-        }
-
-        %new
-        - (void)floatingButtonClick {
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Momo 助手" 
-                                                                           message:@"云端极速出包测试成功！面板准备就绪。" 
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-            UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil];
-            [alert addAction:okAction];
-            
-            [[UIApplication sharedApplication].keyWindow.rootViewController presentViewController:alert animated:YES completion:nil];
         }
 
         %end
