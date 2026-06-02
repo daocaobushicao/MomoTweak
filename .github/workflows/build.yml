@@ -53,18 +53,19 @@ jobs:
         TWEAK_NAME := MomoTweak
 
         MomoTweak_FILES := Tweak.x
+        # 增加 -Wno-error 彻底屏蔽警告报错
         MomoTweak_CFLAGS := -fobjc-arc -Wno-error
 
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
-    - name: 7. 强行重写 MomoTweak.plist 注入声明
+    - name: 7. 【关键修复】重写 MomoTweak.plist（注入正确的包名：com.wemomo.momoappdemo1）
       run: |
         cat << 'EOF' > MomoTweak.plist
-        { Filter = { Bundles = ( "com.immomo.momo" ); }; }
+        { Filter = { Bundles = ( "com.wemomo.momoappdemo1" ); }; }
         EOF
 
-    - name: 8. 强行重写 Tweak.x 核心源码（全兼容 UI 图标版）
+    - name: 8. 重写 Tweak.x 核心源码（全兼容 UI 图标版）
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
