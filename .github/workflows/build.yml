@@ -24,14 +24,11 @@ jobs:
         cp -r $HOME/theos/sdks-repo/iPhoneOS13.6.sdk $HOME/theos/sdks/
         rm -rf $HOME/theos/sdks-repo
 
-    - name: 4. 暴力修复并洗白本地 Makefile 配置
+    - name: 4. 确保 Makefile 拥有标准的交叉编译架构声明
       run: |
-        # 强行删除可能导致 Mac 崩溃的本地 Windows 残留声明
-        sed -i '' '/_cache_/d' Makefile || true
-        sed -i '' '/make.exe/d' Makefile || true
-        # 确保 Makefile 拥有标准的交叉编译架构声明
-        echo "ARCHS = arm64 arm64e" >> Makefile
-        echo "TARGET = iphone:clang:13.6:13.0" >> Makefile
+        # 用 sed 替换已有的 ARCHS 和 TARGET 行，而不是追加
+        sed -i '' 's/^ARCHS :=.*$/ARCHS = arm64 arm64e/' Makefile || true
+        sed -i '' 's/^TARGET :=.*$/TARGET = iphone:clang:13.6:13.0/' Makefile || true
 
     - name: 5. 绑定全局变量并执行原生 Mac 打包
       run: |

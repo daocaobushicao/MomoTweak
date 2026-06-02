@@ -11,7 +11,7 @@
     self = [super initWithFrame:frame];
     if (self) {
         // 设置层级极高，保证在状态栏和常规页面之上
-        self.windowLevel = UIWindowLevelStatusBar + 100;
+        self.windowLevel = 2000;
         self.backgroundColor = [UIColor clearColor];
         
         // 创建圆形的蓝色按钮
