@@ -1,0 +1,9 @@
+
+Package: com.yourname.momofloating
+Name: MomoFloatingButton
+Depends: mobilesubstrate
+Version: 0.0.1
+Architecture: iphoneos-arm64
+Description: Momo App 悬浮窗插件
+Maintainer: YourName
+Author: YourName
