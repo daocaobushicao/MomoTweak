@@ -24,7 +24,11 @@ jobs:
         cp -r $HOME/theos/sdks-repo/iPhoneOS14.5.sdk $HOME/theos/sdks/
         rm -rf $HOME/theos/sdks-repo
 
-    - name: 4. 云端强行重写 control 配置文件
+    - name: 4. 核心补丁：强行安装 Mac 越狱签名工具 ldid
+      run: |
+        brew install ldid
+
+    - name: 5. 云端强行重写 control 配置文件
       run: |
         cat << 'EOF' > control
         Package: com.yourcompany.momotweak
@@ -37,7 +41,7 @@ jobs:
         Author: daocaobushicao
         EOF
 
-    - name: 5. 云端强行重写 Makefile 编译规则
+    - name: 6. 云端强行重写 Makefile 编译规则
       run: |
         cat << 'EOF' > Makefile
         TARGET := iphone:clang:latest:13.0
@@ -54,13 +58,13 @@ jobs:
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
-    - name: 6. 云端强行重写 MomoFloatingButton.plist 注入声明
+    - name: 7. 云端强行重写 MomoFloatingButton.plist 注入声明
       run: |
         cat << 'EOF' > MomoFloatingButton.plist
         { Filter = { Bundles = ( "com.immomo.momo" ); }; }
         EOF
 
-    - name: 7. 云端强行重写 Tweak.x 核心源码（全纯净日志版，彻底绝杀编译错）
+    - name: 8. 云端强行重写 Tweak.x 核心源码
       run: |
         cat << 'EOF' > Tweak.x
         #import <Foundation/Foundation.h>
@@ -70,7 +74,6 @@ jobs:
         - (id)init {
             id original = %orig;
             if (original) {
-                // 不在初始化里搞复杂的 UI 操作，只打一行绝对稳固的系统日志
                 NSLog(@"[大沙雕通知] MomoTweak 注入成功！核心管理类 MDXmppServiceManager 成功挂载！");
             }
             return original;
@@ -79,13 +82,13 @@ jobs:
         %end
         EOF
 
-    - name: 8. 执行原生 Mac 终极打包
+    - name: 9. 执行近Mac终极资源打包
       run: |
         export THEOS=$HOME/theos
         export PATH=$THEOS/bin:$PATH
         make package FINALPACKAGE=1
         
-    - name: 9. 提炼成品 .deb 并上传
+    - name: 10. 提炼成品 .deb 并上传
       uses: actions/upload-artifact@v4
       with:
         name: MomoTweak-Release-Deb
