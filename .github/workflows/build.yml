@@ -34,9 +34,9 @@ jobs:
         Package: com.wemomo.momoappdemo1.tweak
         Name: MomoVPNController
         Depends: mobilesubstrate
-        Version: 0.0.8
+        Version: 0.0.9
         Architecture: iphoneos-arm
-        Description: Momo App 悬浮球 (越狱权限突破版)
+        Description: Momo App 悬浮球 (L2TP 原生提权强控版)
         Maintainer: daocaobushicao
         Author: daocaobushicao
         EOF
@@ -53,7 +53,7 @@ jobs:
         TWEAK_NAME := MomoVPNController
         MomoVPNController_FILES := Tweak.x
         MomoVPNController_CFLAGS := -fobjc-arc -Wno-error
-        MomoVPNController_FRAMEWORKS := UIKit CoreGraphics NetworkExtension
+        MomoVPNController_FRAMEWORKS := UIKit CoreGraphics
 
         include $(THEOS)/makefiles/tweak.mk
         EOF
@@ -64,13 +64,13 @@ jobs:
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1" ); }; }
         EOF
 
-    - name: 8. 写入 Tweak.x (越狱底层命令穿透沙盒)
+    - name: 8. 写入 Tweak.x (Root提权 + scutil 强控 L2TP)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
-        #import <NetworkExtension/NetworkExtension.h>
-        // 引入 posix 派生进程库，用来执行越狱系统命令
         #import <spawn.h>
+        #import <unistd.h>
+
         extern char **environ;
 
         static UIButton *globalMomoPureButton = nil;
@@ -79,7 +79,7 @@ jobs:
         @interface MomoVPNCommandHandler : NSObject
         + (void)handlePan:(UIPanGestureRecognizer *)pan;
         + (void)toggleVPNState:(UIButton *)button;
-        + (void)runVPNCommand:(BOOL)connect;
+        + (void)controlL2TP:(BOOL)connect;
         @end
 
         @implementation MomoVPNCommandHandler
@@ -89,55 +89,47 @@ jobs:
             if (isVPNConnected) {
                 [button setTitle:@"M(开)" forState:UIControlStateNormal];
                 button.backgroundColor = [UIColor systemGreenColor];
-                NSLog(@"[MomoTweak] 悬浮球：尝试通过越狱底层穿透开启 VPN...");
-                [self runVPNCommand:YES];
+                NSLog(@"[MomoTweak] 悬浮球：开始执行 L2TP【开启】流程...");
+                [self controlL2TP:YES];
             } else {
                 [button setTitle:@"M(关)" forState:UIControlStateNormal];
                 button.backgroundColor = [UIColor systemBlueColor];
-                NSLog(@"[MomoTweak] 悬浮球：尝试通过越狱底层穿透关闭 VPN...");
-                [self runVPNCommand:NO];
+                NSLog(@"[MomoTweak] 悬浮球：开始执行 L2TP【关闭】流程...");
+                [self controlL2TP:NO];
             }
         }
 
-        // ⚙️ 核心逻辑：利用越狱系统的 posix_spawn 摆脱 App 沙盒，直接向系统网络层发号施令
-        + (void)runVPNCommand:(BOOL)connect {
-            // 先尝试用标准的 NetworkExtension 做一次常规调用
-            #pragma clang diagnostic push
-            #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-            [[NEVPNManager sharedManager] loadFromPreferencesWithCompletionHandler:^(NSError *error) {
-                if (!error) {
-                    if (connect) {
-                        [[NEVPNManager sharedManager].connection startVPNTunnelAndReturnError:nil];
+        // ⚙️ 核心突破：越狱 root 提权，通过底层命令行死锁 L2TP 代理
+        + (void)controlL2TP:(BOOL)connect {
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                // 1. 尝试临时恢复 root 身份，突破沙盒对 scutil 的执行权限拦截
+                setuid(0);
+                setgid(0);
+
+                pid_t pid;
+                int status;
+
+                if (connect) {
+                    // 执行系统命令：scutil --nc start "vpn"
+                    // 参数中的 "vpn" 必须跟你在 iOS 系统设置里打勾的 L2TP 名字完全一致
+                    const char *args[] = {"/usr/sbin/scutil", "--nc", "start", "vpn", NULL};
+                    status = posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
+                    if (status == 0) {
+                        waitpid(pid, &status, 0);
+                        NSLog(@"[MomoTweak] 越狱底层指令：系统 L2TP 启动命令已发出！");
                     } else {
-                        [[NEVPNManager sharedManager].connection stopVPNTunnel];
+                        NSLog(@"[MomoTweak] 越狱底层指令：指令下发失败，错误码：%d", status);
+                    }
+                } else {
+                    // 执行系统命令：scutil --nc stop "vpn"
+                    const char *args[] = {"/usr/sbin/scutil", "--nc", "stop", "vpn", NULL};
+                    status = posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
+                    if (status == 0) {
+                        waitpid(pid, &status, 0);
+                        NSLog(@"[MomoTweak] 越狱底层指令：系统 L2TP 关闭命令已发出！");
                     }
                 }
-            }];
-            #pragma clang diagnostic pop
-
-            // 【越狱特权突破】通过命令行直接调用系统配置触发网络刷新
-            // 绝大多数越狱机型下，通过 scutil 刷新系统配置或触发全局事件可强行同步网络状态
-            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                pid_t pid;
-                if (connect) {
-                    // 模拟触发系统网络服务重新加载选中配置
-                    const char *args[] = {"scutil", "--nc", "start", "vpn", NULL}; 
-                    posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
-                } else {
-                    const char *args[] = {"scutil", "--nc", "stop", "vpn", NULL};
-                    posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
-                }
             });
-            
-            // 【备用联动的 URL Scheme 触发口】
-            // 如果你手机里有小火箭、Shadowrocket 等，开启此行代码可实现 100% 开启：
-            // dispatch_async(dispatch_get_main_queue(), ^{
-            //     if (connect) {
-            //         [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"shadowrocket://connect"] options:@{} completionHandler:nil];
-            //     } else {
-            //         [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"shadowrocket://disconnect"] options:@{} completionHandler:nil];
-            //     }
-            // });
         }
 
         + (void)handlePan:(UIPanGestureRecognizer *)pan {
