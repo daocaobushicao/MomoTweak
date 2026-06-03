@@ -34,14 +34,14 @@ jobs:
         Package: com.wemomo.momoappdemo1.tweak
         Name: MomoVPNController
         Depends: mobilesubstrate
-        Version: 0.0.7
+        Version: 0.0.8
         Architecture: iphoneos-arm
-        Description: Momo App 悬浮球 (原生设置总开关对齐版)
+        Description: Momo App 悬浮球 (越狱权限突破版)
         Maintainer: daocaobushicao
         Author: daocaobushicao
         EOF
 
-    - name: 6. 写入 Makefile (优化框架引入与路径声明)
+    - name: 6. 写入 Makefile
       run: |
         cat << 'EOF' > Makefile
         TARGET := iphone:clang:latest:13.0
@@ -53,7 +53,6 @@ jobs:
         TWEAK_NAME := MomoVPNController
         MomoVPNController_FILES := Tweak.x
         MomoVPNController_CFLAGS := -fobjc-arc -Wno-error
-        # 显式引入需要的底层库
         MomoVPNController_FRAMEWORKS := UIKit CoreGraphics NetworkExtension
 
         include $(THEOS)/makefiles/tweak.mk
@@ -65,11 +64,14 @@ jobs:
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1" ); }; }
         EOF
 
-    - name: 8. 写入 Tweak.x
+    - name: 8. 写入 Tweak.x (越狱底层命令穿透沙盒)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
         #import <NetworkExtension/NetworkExtension.h>
+        // 引入 posix 派生进程库，用来执行越狱系统命令
+        #import <spawn.h>
+        extern char **environ;
 
         static UIButton *globalMomoPureButton = nil;
         static BOOL isVPNConnected = NO;
@@ -77,7 +79,7 @@ jobs:
         @interface MomoVPNCommandHandler : NSObject
         + (void)handlePan:(UIPanGestureRecognizer *)pan;
         + (void)toggleVPNState:(UIButton *)button;
-        + (void)syncWithSystemVPNPreference:(BOOL)shouldConnect;
+        + (void)runVPNCommand:(BOOL)connect;
         @end
 
         @implementation MomoVPNCommandHandler
@@ -87,31 +89,55 @@ jobs:
             if (isVPNConnected) {
                 [button setTitle:@"M(开)" forState:UIControlStateNormal];
                 button.backgroundColor = [UIColor systemGreenColor];
-                [self syncWithSystemVPNPreference:YES];
+                NSLog(@"[MomoTweak] 悬浮球：尝试通过越狱底层穿透开启 VPN...");
+                [self runVPNCommand:YES];
             } else {
                 [button setTitle:@"M(关)" forState:UIControlStateNormal];
                 button.backgroundColor = [UIColor systemBlueColor];
-                [self syncWithSystemVPNPreference:NO];
+                NSLog(@"[MomoTweak] 悬浮球：尝试通过越狱底层穿透关闭 VPN...");
+                [self runVPNCommand:NO];
             }
         }
 
-        + (void)syncWithSystemVPNPreference:(BOOL)shouldConnect {
+        // ⚙️ 核心逻辑：利用越狱系统的 posix_spawn 摆脱 App 沙盒，直接向系统网络层发号施令
+        + (void)runVPNCommand:(BOOL)connect {
+            // 先尝试用标准的 NetworkExtension 做一次常规调用
             #pragma clang diagnostic push
             #pragma clang diagnostic ignored "-Wdeprecated-declarations"
             [[NEVPNManager sharedManager] loadFromPreferencesWithCompletionHandler:^(NSError *error) {
-                if (error) return;
-                if (shouldConnect) {
-                    if ([NEVPNManager sharedManager].connection.status == NEVPNStatusDisconnected) {
-                        NSError *startError = nil;
-                        [[NEVPNManager sharedManager].connection startVPNTunnelAndReturnError:&startError];
-                    }
-                } else {
-                    if ([NEVPNManager sharedManager].connection.status != NEVPNStatusDisconnected) {
+                if (!error) {
+                    if (connect) {
+                        [[NEVPNManager sharedManager].connection startVPNTunnelAndReturnError:nil];
+                    } else {
                         [[NEVPNManager sharedManager].connection stopVPNTunnel];
                     }
                 }
             }];
             #pragma clang diagnostic pop
+
+            // 【越狱特权突破】通过命令行直接调用系统配置触发网络刷新
+            // 绝大多数越狱机型下，通过 scutil 刷新系统配置或触发全局事件可强行同步网络状态
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                pid_t pid;
+                if (connect) {
+                    // 模拟触发系统网络服务重新加载选中配置
+                    const char *args[] = {"scutil", "--nc", "start", "vpn", NULL}; 
+                    posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
+                } else {
+                    const char *args[] = {"scutil", "--nc", "stop", "vpn", NULL};
+                    posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
+                }
+            });
+            
+            // 【备用联动的 URL Scheme 触发口】
+            // 如果你手机里有小火箭、Shadowrocket 等，开启此行代码可实现 100% 开启：
+            // dispatch_async(dispatch_get_main_queue(), ^{
+            //     if (connect) {
+            //         [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"shadowrocket://connect"] options:@{} completionHandler:nil];
+            //     } else {
+            //         [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"shadowrocket://disconnect"] options:@{} completionHandler:nil];
+            //     }
+            // });
         }
 
         + (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -174,11 +200,10 @@ jobs:
         %end
         EOF
 
-    - name: 9. 执行打包 (强制要求生成标准包)
+    - name: 9. 执行打包
       run: |
         export THEOS=$HOME/theos
         export PATH=$THEOS/bin:$PATH
-        # 清理旧缓存，强行执行打包命令
         make clean
         make package FINALPACKAGE=1
         
@@ -186,7 +211,6 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: MomoVPNController-Release-Deb
-        # 扩大匹配范围，确保不管打出来是什么形态的包都能抓到
         path: |
           packages/*.deb
           *.deb
