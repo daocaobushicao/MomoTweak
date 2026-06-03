@@ -13,22 +13,22 @@ jobs:
     - name: 1. 检出代码
       uses: actions/checkout@v4
 
-    - name: 2. 自动化配置标准的 Theos 全套环境
+    - name: 2. 配置 Theos 环境
       run: |
         git clone --recursive https://github.com/theos/theos.git $HOME/theos
         
-    - name: 3. 精准注入 14.5 SDK
+    - name: 3. 配置 SDK
       run: |
         git clone https://github.com/theos/sdks.git $HOME/theos/sdks-repo
         mkdir -p $HOME/theos/sdks
         cp -r $HOME/theos/sdks-repo/iPhoneOS14.5.sdk $HOME/theos/sdks/
         rm -rf $HOME/theos/sdks-repo
 
-    - name: 4. 强行安装 Mac 越狱签名工具 ldid
+    - name: 4. 安装签名工具
       run: |
         brew install ldid
 
-    - name: 5. 统一重写 control 配置文件（对齐包名）
+    - name: 5. 写入 control
       run: |
         cat << 'EOF' > control
         Package: com.wemomo.momoappdemo1.tweak
@@ -36,12 +36,12 @@ jobs:
         Depends: mobilesubstrate
         Version: 0.0.1
         Architecture: iphoneos-arm64
-        Description: Momo App 悬浮窗插件
+        Description: Momo App 悬浮窗插件 (系统层兼容版)
         Maintainer: daocaobushicao
         Author: daocaobushicao
         EOF
 
-    - name: 6. 统一重写 Makefile 编译规则（加入必要框架）
+    - name: 6. 写入 Makefile
       run: |
         cat << 'EOF' > Makefile
         TARGET := iphone:clang:latest:13.0
@@ -51,7 +51,6 @@ jobs:
         include $(THEOS)/makefiles/common.mk
 
         TWEAK_NAME := MomoFloatingButton
-
         MomoFloatingButton_FILES := Tweak.x
         MomoFloatingButton_CFLAGS := -fobjc-arc -Wno-error
         MomoFloatingButton_FRAMEWORKS := UIKit CoreGraphics
@@ -59,32 +58,31 @@ jobs:
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
-    - name: 7. 统一重写过滤文件（必须与 TWEAK_NAME 完全一致：MomoFloatingButton.plist）
+    - name: 7. 写入 MomoFloatingButton.plist (包名死锁)
       run: |
         cat << 'EOF' > MomoFloatingButton.plist
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1" ); }; }
         EOF
 
-    - name: 8. 强行注入修复后的 Tweak.x 核心源码（支持 iOS13+ Scene 且防闪退）
+    - name: 8. 写入 Tweak.x (底层核心类注入 - 强袭版)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
 
-        // 1. 自定义悬浮窗类
-        @interface MomoFloatingWindow : UIWindow
+        // 自定义悬浮窗
+        @interface MomoSystemFloatingWindow : UIWindow
         @property (nonatomic, strong) UIButton *button;
         @end
 
-        @implementation MomoFloatingWindow
+        @implementation MomoSystemFloatingWindow
 
         - (instancetype)initWithFrame:(CGRect)frame {
             self = [super initWithFrame:frame];
             if (self) {
-                // 兼容现代 iOS 系统的窗口层级
-                self.windowLevel = UIWindowLevelStatusBar + 100;
+                // 强制将层级开到最高，压在所有改机软件和系统 UI 之上
+                self.windowLevel = UIWindowLevelStatusBar + 9999;
                 self.backgroundColor = [UIColor clearColor];
                 
-                // 创建蓝色的圆形按钮
                 self.button = [UIButton buttonWithType:UIButtonTypeCustom];
                 self.button.frame = self.bounds;
                 self.button.backgroundColor = [UIColor systemBlueColor];
@@ -93,13 +91,11 @@ jobs:
                 [self.button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
                 self.button.titleLabel.font = [UIFont boldSystemFontOfSize:20];
                 
-                // 加阴影
                 self.button.layer.shadowColor = [UIColor blackColor].CGColor;
                 self.button.layer.shadowOffset = CGSizeMake(0, 2);
                 self.button.layer.shadowOpacity = 0.4;
                 self.button.layer.shadowRadius = 4;
                 
-                // 绑定事件与拖动手势
                 [self.button addTarget:self action:@selector(buttonClicked) forControlEvents:UIControlEventTouchUpInside];
                 UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
                 [self.button addGestureRecognizer:pan];
@@ -110,7 +106,7 @@ jobs:
         }
 
         - (void)buttonClicked {
-            // 修复：不使用空壳 rootViewController，直接抓取陌陌当前最顶层的活跃页面来弹窗，防止闪退
+            // 安全弹窗逻辑
             UIWindow *frontWindow = [[[UIApplication sharedApplication] windows] firstObject];
             UIViewController *topController = frontWindow.rootViewController;
             while (topController.presentedViewController) {
@@ -118,7 +114,7 @@ jobs:
             }
 
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Momo 助手"
-                                                                           message:@"你点击了悬浮按钮！"
+                                                                           message:@"环境冲突已成功绕过，悬浮球加载成功！"
                                                                     preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
             [topController presentViewController:alert animated:YES completion:nil];
@@ -127,8 +123,8 @@ jobs:
         - (void)handlePan:(UIPanGestureRecognizer *)pan {
             CGPoint translation = [pan translationInView:self];
             CGPoint newCenter = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
-            
             CGSize screenSize = [UIScreen mainScreen].bounds.size;
+            
             if (newCenter.x >= 25 && newCenter.x <= screenSize.width - 25 &&
                 newCenter.y >= 40 && newCenter.y <= screenSize.height - 40) {
                 self.center = newCenter;
@@ -137,41 +133,43 @@ jobs:
         }
         @end
 
-        // 2. 全局静态变量
-        static MomoFloatingWindow *momoWindow = nil;
+        static MomoSystemFloatingWindow *globalMomoWindow = nil;
 
-        // 3. 换成 Hook 陌陌的核心服务类，只在初始化时完美挂载一次窗口，避开 viewDidAppear 循环陷阱
-        %hook MDXmppServiceManager
+        // 核心修改：放弃对陌陌内部类的Hook，直接Hook苹果系统的 UIApplication
+        %hook UIApplication
 
-        - (id)init {
+        - (instancetype)init {
             id original = %orig;
             if (original) {
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                    if (!momoWindow) {
-                        // 抓取当前活跃的 WindowScene，这是 iOS 13+ 显示窗口的铁律！
-                        UIWindow *keyWindow = [[[UIApplication sharedApplication] windows] firstObject];
-                        if (keyWindow && keyWindow.windowScene) {
-                            momoWindow = [[MomoFloatingWindow alloc] initWithFrame:CGRectMake(20, 150, 50, 50)];
-                            momoWindow.windowScene = keyWindow.windowScene; // 强行绑定场景，激活渲染
-                            momoWindow.rootViewController = [[UIViewController alloc] init];
-                            momoWindow.hidden = NO;
-                            NSLog(@"[MomoTweak] 悬浮球已完美激活并挂载到 Scene 场景！");
+                // 监听系统自带的通知，App 一准备好就立刻执行
+                [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification 
+                                                                  object:nil 
+                                                                   queue:[NSOperationQueue mainQueue] 
+                                                              usingBlock:^(NSNotification *note) {
+                    if (!globalMomoWindow) {
+                        UIWindow *keyWin = [[[UIApplication sharedApplication] windows] firstObject];
+                        if (keyWin && keyWin.windowScene) {
+                            globalMomoWindow = [[MomoSystemFloatingWindow alloc] initWithFrame:CGRectMake(30, 200, 55, 55)];
+                            globalMomoWindow.windowScene = keyWin.windowScene;
+                            globalMomoWindow.rootViewController = [[UIViewController alloc] init];
+                            globalMomoWindow.hidden = NO;
+                            NSLog(@"[MomoTweak] 通过系统层成功突破 AMG 改机软件拦截！");
                         }
                     }
-                });
+                }];
             }
             return original;
         }
         %end
         EOF
 
-    - name: 9. 执行近Mac终极资源打包
+    - name: 9. 执行打包
       run: |
         export THEOS=$HOME/theos
         export PATH=$THEOS/bin:$PATH
         make package FINALPACKAGE=1
         
-    - name: 10. 提炼成品 .deb 并上传
+    - name: 10. 上传成品
       uses: actions/upload-artifact@v4
       with:
         name: MomoTweak-Release-Deb
