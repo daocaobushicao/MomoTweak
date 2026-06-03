@@ -32,11 +32,11 @@ jobs:
       run: |
         cat << 'EOF' > control
         Package: com.wemomo.momoappdemo1.tweak
-        Name: MomoFloatingButton
+        Name: MomoVPNController
         Depends: mobilesubstrate
-        Version: 0.0.4
+        Version: 0.0.6
         Architecture: iphoneos-arm
-        Description: Momo App 悬浮窗插件 (功能开发版)
+        Description: Momo App 悬浮球 (原生设置总开关对齐版)
         Maintainer: daocaobushicao
         Author: daocaobushicao
         EOF
@@ -50,81 +50,104 @@ jobs:
 
         include $(THEOS)/makefiles/common.mk
 
-        TWEAK_NAME := MomoFloatingButton
-        MomoFloatingButton_FILES := Tweak.x
-        MomoFloatingButton_CFLAGS := -fobjc-arc -Wno-error
-        MomoFloatingButton_FRAMEWORKS := UIKit CoreGraphics
+        TWEAK_NAME := MomoVPNController
+        MomoVPNController_FILES := Tweak.x
+        MomoVPNController_CFLAGS := -fobjc-arc -Wno-error
+        MomoVPNController_FRAMEWORKS := UIKit CoreGraphics NetworkExtension
 
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
     - name: 7. 写入 MomoFloatingButton.plist
       run: |
-        cat << 'EOF' > MomoFloatingButton.plist
+        cat << 'EOF' > MomoVPNController.plist
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1" ); }; }
         EOF
 
-    - name: 8. 写入 Tweak.x (原生强挂载：手势完好，预留功能接口)
+    - name: 8. 写入 Tweak.x (原生配置开关联动)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
+        #import <NetworkExtension/NetworkExtension.h>
 
-        // 全局静态变量，确保全局唯一
         static UIButton *globalMomoPureButton = nil;
+        static BOOL isVPNConnected = NO; // 开关状态锁
 
-        @interface MomoGestureHandler : NSObject
+        @interface MomoVPNCommandHandler : NSObject
         + (void)handlePan:(UIPanGestureRecognizer *)pan;
-        + (void)buttonClicked;
+        + (void)toggleVPNState:(UIButton *)button;
+        + (void)syncWithSystemVPNPreference:(BOOL)shouldConnect;
         @end
 
-        @implementation MomoGestureHandler
+        @implementation MomoVPNCommandHandler
 
         // ==========================================
-        // 🚀 核心点击事件：后续你的自动化功能代码直接加在这里！
+        // 🔄 核心业务：按钮文字切换 + 联动系统原生 VPN
         // ==========================================
-        + (void)buttonClicked {
-            // 1. 获取当前正在最前面显示的 Window
-            UIWindow *keyWindow = nil;
-            if (@available(iOS 13.0, *)) {
-                for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                    if (scene.activationState == UISceneActivationStateForegroundActive) {
-                        for (UIWindow *window in scene.windows) {
-                            if (window.isKeyWindow) {
-                                keyWindow = window;
-                                break;
-                            }
+        + (void)toggleVPNState:(UIButton *)button {
+            isVPNConnected = !isVPNConnected;
+            
+            if (isVPNConnected) {
+                // 切换为【开启】
+                [button setTitle:@"M(开)" forState:UIControlStateNormal];
+                button.backgroundColor = [UIColor systemGreenColor]; // 变成环保绿提示开启
+                
+                NSLog(@"[MomoTweak] 悬浮球触发：准备连接系统原生 VPN 配置...");
+                [self syncWithSystemVPNPreference:YES];
+            } else {
+                // 切换为【关闭】
+                [button setTitle:@"M(关)" forState:UIControlStateNormal];
+                button.backgroundColor = [UIColor systemBlueColor];  // 变回初始蓝
+                
+                NSLog(@"[MomoTweak] 悬浮球触发：准备断开系统原生 VPN 配置...");
+                [self syncWithSystemVPNPreference:NO];
+            }
+        }
+
+        // ⚙️ 核心控制：打通 NetworkExtension 刷新你图中选中的那个 "vpn" 配置
+        + (void)syncWithSystemVPNPreference:(BOOL)shouldConnect {
+            #pragma clang diagnostic push
+            #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            
+            // 强行要求系统从 Preferences 全局配置里加载你打勾的那个 VPN
+            [[NEVPNManager sharedManager] loadFromPreferencesWithCompletionHandler:^(NSError *error) {
+                if (error) {
+                    NSLog(@"[MomoTweak] 无法读取系统内置 VPN 配置: %@", error.localizedDescription);
+                    return;
+                }
+                
+                if (shouldConnect) {
+                    // 如果当前是断开状态，才发送启动指令
+                    if ([NEVPNManager sharedManager].connection.status == NEVPNStatusDisconnected) {
+                        NSError *startError = nil;
+                        [[NEVPNManager sharedManager].connection startVPNTunnelAndReturnError:&startError];
+                        if (startError) {
+                            NSLog(@"[MomoTweak] 系统原生隧道启动失败: %@", startError.localizedDescription);
+                        } else {
+                            NSLog(@"[MomoTweak] 成功驱动系统原生 VPN 开关！");
                         }
                     }
+                } else {
+                    // 如果当前没有断开，强行切断隧道
+                    if ([NEVPNManager sharedManager].connection.status != NEVPNStatusDisconnected) {
+                        [[NEVPNManager sharedManager].connection stopVPNTunnel];
+                        NSLog(@"[MomoTweak] 成功关闭系统原生 VPN 开关！");
+                    }
                 }
-            }
-            if (!keyWindow) keyWindow = [[[UIApplication sharedApplication] windows] firstObject];
-            
-            // 2. 找到最顶层的控制器，用来安全弹窗
-            UIViewController *topController = keyWindow.rootViewController;
-            while (topController.presentedViewController) {
-                topController = topController.presentedViewController;
-            }
-
-            // 3. 弹出响应提示
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Momo 功能面板"
-                                                                           message:@"悬浮球响应成功！\n当前处于原始机型安全环境。\n\n请在 Tweak.x 的 buttonClicked 方法中添加你的自动化或劫持业务逻辑。"
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"收到" style:UIAlertActionStyleDefault handler:nil]];
-            [topController presentViewController:alert animated:YES completion:nil];
+            }];
+            #pragma clang diagnostic pop
         }
 
         // ==========================================
-        // ✋ 核心滑动事件：完美平滑拖拽，防止出界
+        // ✋ 丝滑拖拽手势
         // ==========================================
         + (void)handlePan:(UIPanGestureRecognizer *)pan {
             UIView *button = pan.view;
             CGPoint translation = [pan translationInView:button.superview];
             CGPoint newCenter = CGPointMake(button.center.x + translation.x, button.center.y + translation.y);
-            
             CGSize screenSize = [UIScreen mainScreen].bounds.size;
             
-            // 边缘保护（上下左右各留安全距离）
-            if (newCenter.x >= 27 && newCenter.x <= screenSize.width - 27 &&
+            if (newCenter.x >= 32 && newCenter.x <= screenSize.width - 32 &&
                 newCenter.y >= 40 && newCenter.y <= screenSize.height - 40) {
                 button.center = newCenter;
             }
@@ -133,14 +156,13 @@ jobs:
         @end
 
         // ==========================================
-        // 💉 视图注入生命周期 Hook
+        // 💉 注入生命周期
         // ==========================================
         %hook UIViewController
 
         - (void)viewDidAppear:(BOOL)animated {
             %orig(animated);
 
-            // 核心过滤：只在全屏的主页面视图上挂载悬浮球，避免在小弹窗、键盘上重复挂载
             if (self.view.frame.size.width == [UIScreen mainScreen].bounds.size.width && 
                 self.view.frame.size.height == [UIScreen mainScreen].bounds.size.height) {
                 
@@ -159,52 +181,39 @@ jobs:
                 }
                 if (!mainTargetWindow) mainTargetWindow = [[[UIApplication sharedApplication] windows] firstObject];
                 
-                // 如果找到了主 Window，且悬浮球还没创建
                 if (mainTargetWindow && !globalMomoPureButton) {
-                    
-                    // 初始化 55x55 圆形按钮
                     globalMomoPureButton = [UIButton buttonWithType:UIButtonTypeCustom];
-                    globalMomoPureButton.frame = CGRectMake(20, 300, 55, 55);
-                    globalMomoPureButton.backgroundColor = [UIColor systemBlueColor];
+                    globalMomoPureButton.frame = CGRectMake(20, 300, 65, 55); // 精准预留文字宽度
+                    globalMomoPureButton.backgroundColor = [UIColor systemBlueColor]; 
                     globalMomoPureButton.layer.cornerRadius = 55 / 2.0;
                     
-                    // 添加精致的阴影，让它更有质感
                     globalMomoPureButton.layer.shadowColor = [UIColor blackColor].CGColor;
                     globalMomoPureButton.layer.shadowOffset = CGSizeMake(0, 3);
                     globalMomoPureButton.layer.shadowOpacity = 0.4;
                     globalMomoPureButton.layer.shadowRadius = 4;
                     
-                    [globalMomoPureButton setTitle:@"M" forState:UIControlStateNormal];
+                    [globalMomoPureButton setTitle:@"M(关)" forState:UIControlStateNormal];
                     [globalMomoPureButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-                    globalMomoPureButton.titleLabel.font = [UIFont boldSystemFontOfSize:22];
+                    globalMomoPureButton.titleLabel.font = [UIFont boldSystemFontOfSize:15];
                     
-                    // 绑定一键点击事件
-                    [globalMomoPureButton addTarget:[MomoGestureHandler class] 
-                                             action:@selector(buttonClicked) 
+                    [globalMomoPureButton addTarget:[MomoVPNCommandHandler class] 
+                                             action:@selector(toggleVPNState:) 
                                    forControlEvents:UIControlEventTouchUpInside];
                     
-                    // 绑定拖动手势
-                    UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:[MomoGestureHandler class] 
+                    UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:[MomoVPNCommandHandler class] 
                                                                                                  action:@selector(handlePan:)];
                     [globalMomoPureButton addGestureRecognizer:panGesture];
                     
-                    // 强行插入到主 Window 的最顶层视图
                     [mainTargetWindow addSubview:globalMomoPureButton];
-                    NSLog(@"[MomoTweak] 功能版悬浮球已完美挂载到 Window 最顶层！");
+                    NSLog(@"[MomoTweak] 原生 VPN 联动悬浮球强刷版加载成功。");
                 }
             }
         }
         %end
         EOF
 
-    - name: 9. 执行打包
-      run: |
-        export THEOS=$HOME/theos
-        export PATH=$THEOS/bin:$PATH
-        make package FINALPACKAGE=1
-        
     - name: 10. 上传成品
       uses: actions/upload-artifact@v4
       with:
-        name: MomoTweak-Release-Deb
+        name: MomoVPNController-Release-Deb
         path: packages/*.deb
