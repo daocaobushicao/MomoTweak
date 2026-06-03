@@ -28,20 +28,20 @@ jobs:
       run: |
         brew install ldid
 
-    - name: 5. 写入 control (严格限定系统所需的兼容架构)
+    - name: 5. 写入 control (限定传统 rootful 越狱架构)
       run: |
         cat << 'EOF' > control
         Package: com.wemomo.momoappdemo1.tweak
         Name: MomoVPNController
         Depends: mobilesubstrate
-        Version: 0.0.12
+        Version: 0.0.13
         Architecture: iphoneos-arm
-        Description: Momo App 悬浮球 (双进程中转兼容版)
+        Description: Momo App 悬浮球 (带连接状态精准同步版)
         Maintainer: daocaobushicao
         Author: daocaobushicao
         EOF
 
-    - name: 6. 写入 Makefile
+    - name: 6. 写入 Makefile (链接系统配置框架)
       run: |
         cat << 'EOF' > Makefile
         TARGET := iphone:clang:latest:13.0
@@ -53,51 +53,99 @@ jobs:
         TWEAK_NAME := MomoVPNController
         MomoVPNController_FILES := Tweak.x
         MomoVPNController_CFLAGS := -fobjc-arc -Wno-error
-        MomoVPNController_FRAMEWORKS := UIKit CoreGraphics
+        MomoVPNController_FRAMEWORKS := UIKit CoreGraphics SystemConfiguration
 
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
-    - name: 7. 写入 MomoVPNController.plist
+    - name: 7. 写入 MomoVPNController.plist (同时挂载陌陌与桌面)
       run: |
         cat << 'EOF' > MomoVPNController.plist
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1", "com.apple.springboard" ); }; }
         EOF
 
-    - name: 8. 写入 Tweak.x (调整语法顺序，完美解决未定义报错)
+    - name: 8. 写入 Tweak.x (双进程特权同步核心)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
         #import <spawn.h>
         #import <unistd.h>
+        #import <SystemConfiguration/SystemConfiguration.h>
 
         extern char **environ;
 
+        // 进程间通信通知定义
         #define kVPNStartNotification "com.wemomo.vpn.start"
         #define kVPNStopNotification "com.wemomo.vpn.stop"
+        #define kVPNStatusConnectedNotification "com.wemomo.vpn.status.connected"
+        #define kVPNStatusDisconnectedNotification "com.wemomo.vpn.status.disconnected"
 
         static UIButton *globalMomoPureButton = nil;
         static BOOL isVPNConnected = NO;
 
         // =========================================================================
-        // 🧱 模块一：桌面进程 (SpringBoard) 特权回调
+        // 🧱 模块一：桌面特权进程 (SpringBoard) —— 负责拨号与实时网卡状态轮询
         // =========================================================================
+
+        // 核心技术：读取 iOS 底层网络状态动态库，检查原生 VPN 全局路由实体是否存在
+        static BOOL isSystemVPNActive() {
+            BOOL active = NO;
+            SCDynamicStoreRef store = SCDynamicStoreCreate(NULL, CFSTR("VPNCheck"), NULL, NULL);
+            if (store) {
+                CFStringRef key = SCDynamicStoreKeyCreateNetworkGlobalEntity(NULL, kSCDynamicStoreDomainState, kSCEntNetIPv4);
+                if (key) {
+                    CFDictionaryRef dict = (CFDictionaryRef)SCDynamicStoreCopyValue(store, key);
+                    if (dict) {
+                        if (CFDictionaryContainsKey(dict, CFSTR("Service"))) {
+                            active = YES;
+                        }
+                        CFRelease(dict);
+                    }
+                    CFRelease(key);
+                }
+                CFRelease(store);
+            }
+            return active;
+        }
+
+        // 高频轮询器：每 0.5 秒抓取一次网卡状态
+        static void pollVPNConnectionStatus(BOOL targetState, int retryCount) {
+            if (retryCount <= 0) return; // 超时保护
+            
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                BOOL currentState = isSystemVPNActive();
+                if (currentState == targetState) {
+                    if (targetState) {
+                        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(kVPNStatusConnectedNotification), NULL, NULL, YES);
+                    } else {
+                        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(kVPNStatusDisconnectedNotification), NULL, NULL, YES);
+                    }
+                } else {
+                    pollVPNConnectionStatus(targetState, retryCount - 1);
+                }
+            });
+        }
+
         static void handleSpringBoardVPNStart(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-            NSLog(@"[MomoTweak] 桌面进程接收到通知：开始驱动系统 L2TP 开启...");
             pid_t pid;
             const char *args[] = {"/usr/sbin/scutil", "--nc", "start", "vpn", NULL};
             posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
+            
+            // 最大支持 15 秒拨号等待（30次 * 0.5秒）
+            pollVPNConnectionStatus(YES, 30);
         }
 
         static void handleSpringBoardVPNStop(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-            NSLog(@"[MomoTweak] 桌面进程接收到通知：开始驱动系统 L2TP 关闭...");
             pid_t pid;
             const char *args[] = {"/usr/sbin/scutil", "--nc", "stop", "vpn", NULL};
             posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
+            
+            pollVPNConnectionStatus(NO, 20);
         }
 
+
         // =========================================================================
-        // 📱 模块二：陌陌 UI 控制链
+        // 📱 模块二：应用沙盒进程 (Momo) —— 负责 UI 防刷锁死与过渡动画展示
         // =========================================================================
         @interface MomoVPNCommandHandler : NSObject
         + (void)handlePan:(UIPanGestureRecognizer *)pan;
@@ -107,14 +155,26 @@ jobs:
         @implementation MomoVPNCommandHandler
 
         + (void)toggleVPNState:(UIButton *)button {
-            isVPNConnected = !isVPNConnected;
-            if (isVPNConnected) {
-                [button setTitle:@"M(开)" forState:UIControlStateNormal];
-                button.backgroundColor = [UIColor systemGreenColor];
+            // 🔒 瞬间切断点击权限，防止脚本在过渡期重复高频触发导致 scutil 死锁
+            button.userInteractionEnabled = NO;
+            
+            if (!isVPNConnected) {
+                // 进入黄色等待状态
+                [button setTitle:@"M(⌛)" forState:UIControlStateNormal];
+                button.backgroundColor = [UIColor systemOrangeColor]; 
+                
+                // 启动呼吸闪烁动效
+                [UIView animateWithDuration:0.4 delay:0 options:UIViewAnimationOptionAutoreverse | UIViewAnimationOptionRepeat animations:^{
+                    button.alpha = 0.5;
+                } completion:nil];
+                
                 CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(kVPNStartNotification), NULL, NULL, YES);
+                NSLog(@"[MomoTweak] UI层已进入锁定状态，正在等待底层打通隧道...");
             } else {
-                [button setTitle:@"M(关)" forState:UIControlStateNormal];
-                button.backgroundColor = [UIColor systemBlueColor];
+                // 进入断开灰色等待状态
+                [button setTitle:@"M(断)" forState:UIControlStateNormal];
+                button.backgroundColor = [UIColor systemGrayColor];
+                
                 CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(kVPNStopNotification), NULL, NULL, YES);
             }
         }
@@ -132,8 +192,41 @@ jobs:
         }
         @end
 
+        // 🟢 收到网卡确认连通通知：彻底变绿并解锁点击
+        static void onMomoReceivedConnected(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (globalMomoPureButton) {
+                    [globalMomoPureButton.layer removeAllAnimations];
+                    globalMomoPureButton.alpha = 1.0;
+                    
+                    isVPNConnected = YES;
+                    globalMomoPureButton.userInteractionEnabled = YES; // 🔓 恢复点击权限
+                    [globalMomoPureButton setTitle:@"M(开)" forState:UIControlStateNormal];
+                    globalMomoPureButton.backgroundColor = [UIColor systemGreenColor];
+                    NSLog(@"[MomoTweak] 状态完美同步：VPN 已就绪，按钮成功解锁！");
+                }
+            });
+        }
+
+        // 🔴 收到网卡确认断开通知：恢复初始蓝色并解锁点击
+        static void onMomoReceivedDisconnected(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (globalMomoPureButton) {
+                    [globalMomoPureButton.layer removeAllAnimations];
+                    globalMomoPureButton.alpha = 1.0;
+                    
+                    isVPNConnected = NO;
+                    globalMomoPureButton.userInteractionEnabled = YES; // 🔓 恢复点击权限
+                    [globalMomoPureButton setTitle:@"M(关)" forState:UIControlStateNormal];
+                    globalMomoPureButton.backgroundColor = [UIColor systemBlueColor];
+                    NSLog(@"[MomoTweak] 状态完美同步：VPN 已关闭，按钮重置就绪！");
+                }
+            });
+        }
+
+
         // =========================================================================
-        // 💉 提前定义 Hook 组 (必须在 %ctor 之前，确保编译器能识别)
+        // 💉 统一挂钩与初始化逻辑分流
         // =========================================================================
         %group MomoUIHook
         %hook UIViewController
@@ -183,19 +276,20 @@ jobs:
         %end
         %end
 
-        // =========================================================================
-        // 🚀 初始化注入控制中心
-        // =========================================================================
         %ctor {
             NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
             
             if ([bundleID isEqualToString:@"com.apple.springboard"]) {
-                NSLog(@"[MomoTweak] 成功入驻 SpringBoard 后台，监听总线已铺设。");
+                // 特权进程：监听硬件拨号请求
                 CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, handleSpringBoardVPNStart, CFSTR(kVPNStartNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
                 CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, handleSpringBoardVPNStop, CFSTR(kVPNStopNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
             } 
             else if ([bundleID isEqualToString:@"com.wemomo.momoappdemo1"]) {
-                NSLog(@"[MomoTweak] 成功入驻陌陌应用层，激活 UI 渲染。");
+                // 沙盒应用：监听后台网络回传状态
+                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onMomoReceivedConnected, CFSTR(kVPNStatusConnectedNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, onMomoReceivedDisconnected, CFSTR(kVPNStatusDisconnectedNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                
+                // 激活 MomoUIHook
                 %init(MomoUIHook);
             }
         }
