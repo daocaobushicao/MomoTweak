@@ -64,7 +64,7 @@ jobs:
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1", "com.apple.springboard" ); }; }
         EOF
 
-    - name: 8. 写入 Tweak.x (底层语法全隔离・确保 100% 编译通过)
+    - name: 8. 写入 Tweak.x (彻底修正 API 函数名)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
@@ -86,7 +86,7 @@ jobs:
         static BOOL isVPNConnected = NO;
 
         // =========================================================================
-        // 🧱 C 语言全局底层函数前置声明 (防止编译器报 Implicit declaration 错误)
+        // 🧱 C 语言全局底层函数 (修正 if_freenameindex 拼写)
         // =========================================================================
 
         static BOOL checkSystemVPNActiveViaNet() {
@@ -100,7 +100,8 @@ jobs:
                         break;
                     }
                 }
-                if_nameindex_free(if_ni);
+                // ✅ 彻底修复此处：iOS/macOS 正确的释放函数名是 if_freenameindex
+                if_freenameindex(if_ni);
             }
             return active;
         }
@@ -147,7 +148,7 @@ jobs:
         @implementation MomoVPNCommandHandler
 
         + (void)toggleVPNState:(UIButton *)button {
-            // 🔒 【核心防刷锁】点击瞬间死锁交互，不允许任何后续多余的点击
+            // 🔒 【核心防刷锁】点击瞬间死锁交互，按钮立即禁点
             button.userInteractionEnabled = NO;
             
             if (!isVPNConnected) {
@@ -215,7 +216,7 @@ jobs:
         }
 
         // =========================================================================
-        // 💉 注入生命周期管理 (完全规避 %group 展开位置引发的语义冲突)
+        // 💉 注入生命周期管理
         // =========================================================================
         %group MomoUIHook
         %hook UIViewController
@@ -266,7 +267,6 @@ jobs:
         %end
 
         %ctor {
-            // 使用标准的 C 语言标准输入输出流和运行时进程名获取，100% 避开 ObjC 的 Linker 致命报错
             const char *progname = getprogname();
             
             if (progname != NULL && strcmp(progname, "SpringBoard") == 0) {
