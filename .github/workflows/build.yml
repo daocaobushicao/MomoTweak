@@ -28,7 +28,7 @@ jobs:
       run: |
         brew install ldid
 
-    - name: 5. 写入 control (修正架构为 iphoneos-arm)
+    - name: 5. 写入 control
       run: |
         cat << 'EOF' > control
         Package: com.wemomo.momoappdemo1.tweak
@@ -36,7 +36,7 @@ jobs:
         Depends: mobilesubstrate
         Version: 0.0.1
         Architecture: iphoneos-arm
-        Description: Momo App 悬浮窗插件 (系统层兼容版)
+        Description: Momo App 悬浮窗插件 (纯净手势版)
         Maintainer: daocaobushicao
         Author: daocaobushicao
         EOF
@@ -64,50 +64,27 @@ jobs:
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1" ); }; }
         EOF
 
-    - name: 8. 写入 Tweak.x (底层核心类注入 + 基础反风控)
+    - name: 8. 写入 Tweak.x (纯净无冲突：精准局部窗口 + 手势激活)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
-        #import <sys/stat.h>
 
-        // ==========================================
-        // 🛡️ 核心防风控：阻止陌陌通过常见系统底层文件检测越狱/改机
-        // ==========================================
-        %hookf(int, lstat, const char *path, struct stat *buf) {
-            if (path != NULL) {
-                if (strstr(path, "Cydia") || strstr(path, "MobileSubstrate") || strstr(path, "amg") || strstr(path, "tweak")) {
-                    errno = ENOENT;
-                    return -1;
-                }
-            }
-            return %orig(path, buf);
-        }
-
-        %hookf(int, stat, const char *path, struct stat *buf) {
-            if (path != NULL) {
-                if (strstr(path, "Cydia") || strstr(path, "MobileSubstrate") || strstr(path, "amg") || strstr(path, "tweak")) {
-                    errno = ENOENT;
-                    return -1;
-                }
-            }
-            return %orig(path, buf);
-        }
-
-        // ==========================================
-        // 🎛️ UI 悬浮窗层逻辑
-        // ==========================================
-        @interface MomoSystemFloatingWindow : UIWindow
+        // 自定义纯净悬浮窗
+        @interface MomoPureFloatingWindow : UIWindow
         @property (nonatomic, strong) UIButton *button;
         @end
 
-        @implementation MomoSystemFloatingWindow
+        @implementation MomoPureFloatingWindow
 
         - (instancetype)initWithFrame:(CGRect)frame {
             self = [super initWithFrame:frame];
             if (self) {
+                // 将层级设置为最高，确保显示在最上层
                 self.windowLevel = UIWindowLevelStatusBar + 99999;
                 self.backgroundColor = [UIColor clearColor];
+                self.userInteractionEnabled = YES;
                 
+                // 创建按钮，直接填满 55x55 的局部窗口
                 self.button = [UIButton buttonWithType:UIButtonTypeCustom];
                 self.button.frame = self.bounds;
                 self.button.backgroundColor = [UIColor systemBlueColor];
@@ -115,10 +92,14 @@ jobs:
                 [self.button setTitle:@"M" forState:UIControlStateNormal];
                 [self.button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
                 self.button.titleLabel.font = [UIFont boldSystemFontOfSize:20];
+                self.button.userInteractionEnabled = YES;
                 
+                // 绑定按钮点击事件
                 [self.button addTarget:self action:@selector(buttonClicked) forControlEvents:UIControlEventTouchUpInside];
+                
+                // 绑定拖动手势到 Window 上
                 UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-                [self.button addGestureRecognizer:pan];
+                [self addGestureRecognizer:pan];
                 
                 [self addSubview:self.button];
             }
@@ -126,14 +107,23 @@ jobs:
         }
 
         - (void)buttonClicked {
-            UIWindow *frontWindow = [[[UIApplication sharedApplication] windows] firstObject];
+            // 安全抓取底层的活跃控制器来弹窗
+            UIWindow *frontWindow = nil;
+            for (UIWindow *window in [UIApplication sharedApplication].windows) {
+                if (window != self && !window.hidden) {
+                    frontWindow = window;
+                    break;
+                }
+            }
+            if (!frontWindow) frontWindow = [[[UIApplication sharedApplication] windows] firstObject];
+            
             UIViewController *topController = frontWindow.rootViewController;
             while (topController.presentedViewController) {
                 topController = topController.presentedViewController;
             }
 
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Momo 助手"
-                                                                           message:@"成功强行突破风控层，悬浮球加载成功！"
+                                                                           message:@"悬浮球已完美激活，且绝不干扰一键新机！"
                                                                     preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
             [topController presentViewController:alert animated:YES completion:nil];
@@ -144,7 +134,8 @@ jobs:
             CGPoint newCenter = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
             CGSize screenSize = [UIScreen mainScreen].bounds.size;
             
-            if (newCenter.x >= 25 && newCenter.x <= screenSize.width - 25 &&
+            // 边缘防出界
+            if (newCenter.x >= 27 && newCenter.x <= screenSize.width - 27 &&
                 newCenter.y >= 40 && newCenter.y <= screenSize.height - 40) {
                 self.center = newCenter;
             }
@@ -152,7 +143,18 @@ jobs:
         }
         @end
 
-        static MomoSystemFloatingWindow *globalMomoWindow = nil;
+        // 专门为 55x55 大小定制的控制器壳
+        @interface MomoMiniViewController : UIViewController
+        @end
+        @implementation MomoMiniViewController
+        - (void)viewDidLoad {
+            [super viewDidLoad];
+            self.view.frame = CGRectMake(0, 0, 55, 55);
+            self.view.backgroundColor = [UIColor clearColor];
+        }
+        @end
+
+        static MomoPureFloatingWindow *globalMomoWindow = nil;
 
         %hook UIApplication
 
@@ -166,11 +168,12 @@ jobs:
                     if (!globalMomoWindow) {
                         UIWindow *keyWin = [[[UIApplication sharedApplication] windows] firstObject];
                         if (keyWin && keyWin.windowScene) {
-                            globalMomoWindow = [[MomoSystemFloatingWindow alloc] initWithFrame:CGRectMake(30, 250, 55, 55)];
+                            // 核心改变：窗口大小直接就是 55x55，除了这块圆形区域，屏幕其他地方都是空的，绝不拦截陌陌的任何点击
+                            globalMomoWindow = [[MomoPureFloatingWindow alloc] initWithFrame:CGRectMake(30, 250, 55, 55)];
                             globalMomoWindow.windowScene = keyWin.windowScene;
-                            globalMomoWindow.rootViewController = [[UIViewController alloc] init];
+                            globalMomoWindow.rootViewController = [[MomoMiniViewController alloc] init];
                             globalMomoWindow.hidden = NO;
-                            NSLog(@"[MomoTweak] 底层通知触发：强行渲染顶层悬浮窗！");
+                            NSLog(@"[MomoTweak] 纯净无冲突悬浮窗已成功挂载！");
                         }
                     }
                 }];
