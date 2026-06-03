@@ -28,20 +28,20 @@ jobs:
       run: |
         brew install ldid
 
-    - name: 5. 云端强行重写 control 配置文件
+    - name: 5. 统一重写 control 配置文件（对齐包名）
       run: |
         cat << 'EOF' > control
-        Package: com.yourcompany.momotweak
-        Name: MomoTweak
+        Package: com.wemomo.momoappdemo1.tweak
+        Name: MomoFloatingButton
         Depends: mobilesubstrate
         Version: 0.0.1
-        Architecture: iphoneos-arm
-        Description: An awesome iOS Tweak for Momo
+        Architecture: iphoneos-arm64
+        Description: Momo App 悬浮窗插件
         Maintainer: daocaobushicao
         Author: daocaobushicao
         EOF
 
-    - name: 6. 云端强行重写 Makefile 编译规则
+    - name: 6. 统一重写 Makefile 编译规则（加入必要框架）
       run: |
         cat << 'EOF' > Makefile
         TARGET := iphone:clang:latest:13.0
@@ -50,59 +50,118 @@ jobs:
 
         include $(THEOS)/makefiles/common.mk
 
-        TWEAK_NAME := MomoTweak
+        TWEAK_NAME := MomoFloatingButton
 
-        MomoTweak_FILES := Tweak.x
-        # 增加 -Wno-error 彻底屏蔽警告报错
-        MomoTweak_CFLAGS := -fobjc-arc -Wno-error
+        MomoFloatingButton_FILES := Tweak.x
+        MomoFloatingButton_CFLAGS := -fobjc-arc -Wno-error
+        MomoFloatingButton_FRAMEWORKS := UIKit CoreGraphics
 
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
-    - name: 7. 【关键修复】重写 MomoTweak.plist（注入正确的包名：com.wemomo.momoappdemo1）
+    - name: 7. 统一重写过滤文件（必须与 TWEAK_NAME 完全一致：MomoFloatingButton.plist）
       run: |
-        cat << 'EOF' > MomoTweak.plist
+        cat << 'EOF' > MomoFloatingButton.plist
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1" ); }; }
         EOF
 
-    - name: 8. 重写 Tweak.x 核心源码（全兼容 UI 图标版）
+    - name: 8. 强行注入修复后的 Tweak.x 核心源码（支持 iOS13+ Scene 且防闪退）
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
 
-        @interface MDXmppServiceManager : NSObject
-        - (void)initMomoFloatingButton;
+        // 1. 自定义悬浮窗类
+        @interface MomoFloatingWindow : UIWindow
+        @property (nonatomic, strong) UIButton *button;
         @end
 
+        @implementation MomoFloatingWindow
+
+        - (instancetype)initWithFrame:(CGRect)frame {
+            self = [super initWithFrame:frame];
+            if (self) {
+                // 兼容现代 iOS 系统的窗口层级
+                self.windowLevel = UIWindowLevelStatusBar + 100;
+                self.backgroundColor = [UIColor clearColor];
+                
+                // 创建蓝色的圆形按钮
+                self.button = [UIButton buttonWithType:UIButtonTypeCustom];
+                self.button.frame = self.bounds;
+                self.button.backgroundColor = [UIColor systemBlueColor];
+                self.button.layer.cornerRadius = frame.size.width / 2;
+                [self.button setTitle:@"M" forState:UIControlStateNormal];
+                [self.button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                self.button.titleLabel.font = [UIFont boldSystemFontOfSize:20];
+                
+                // 加阴影
+                self.button.layer.shadowColor = [UIColor blackColor].CGColor;
+                self.button.layer.shadowOffset = CGSizeMake(0, 2);
+                self.button.layer.shadowOpacity = 0.4;
+                self.button.layer.shadowRadius = 4;
+                
+                // 绑定事件与拖动手势
+                [self.button addTarget:self action:@selector(buttonClicked) forControlEvents:UIControlEventTouchUpInside];
+                UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+                [self.button addGestureRecognizer:pan];
+                
+                [self addSubview:self.button];
+            }
+            return self;
+        }
+
+        - (void)buttonClicked {
+            // 修复：不使用空壳 rootViewController，直接抓取陌陌当前最顶层的活跃页面来弹窗，防止闪退
+            UIWindow *frontWindow = [[[UIApplication sharedApplication] windows] firstObject];
+            UIViewController *topController = frontWindow.rootViewController;
+            while (topController.presentedViewController) {
+                topController = topController.presentedViewController;
+            }
+
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Momo 助手"
+                                                                           message:@"你点击了悬浮按钮！"
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+            [topController presentViewController:alert animated:YES completion:nil];
+        }
+
+        - (void)handlePan:(UIPanGestureRecognizer *)pan {
+            CGPoint translation = [pan translationInView:self];
+            CGPoint newCenter = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
+            
+            CGSize screenSize = [UIScreen mainScreen].bounds.size;
+            if (newCenter.x >= 25 && newCenter.x <= screenSize.width - 25 &&
+                newCenter.y >= 40 && newCenter.y <= screenSize.height - 40) {
+                self.center = newCenter;
+            }
+            [pan setTranslation:CGPointZero inView:self];
+        }
+        @end
+
+        // 2. 全局静态变量
+        static MomoFloatingWindow *momoWindow = nil;
+
+        // 3. 换成 Hook 陌陌的核心服务类，只在初始化时完美挂载一次窗口，避开 viewDidAppear 循环陷阱
         %hook MDXmppServiceManager
 
         - (id)init {
             id original = %orig;
             if (original) {
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                    [self initMomoFloatingButton];
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    if (!momoWindow) {
+                        // 抓取当前活跃的 WindowScene，这是 iOS 13+ 显示窗口的铁律！
+                        UIWindow *keyWindow = [[[UIApplication sharedApplication] windows] firstObject];
+                        if (keyWindow && keyWindow.windowScene) {
+                            momoWindow = [[MomoFloatingWindow alloc] initWithFrame:CGRectMake(20, 150, 50, 50)];
+                            momoWindow.windowScene = keyWindow.windowScene; // 强行绑定场景，激活渲染
+                            momoWindow.rootViewController = [[UIViewController alloc] init];
+                            momoWindow.hidden = NO;
+                            NSLog(@"[MomoTweak] 悬浮球已完美激活并挂载到 Scene 场景！");
+                        }
+                    }
                 });
             }
             return original;
         }
-
-        %new
-        - (void)initMomoFloatingButton {
-            UIWindow *keyWindow = [[[UIApplication sharedApplication] windows] firstObject];
-            if (!keyWindow) return;
-            
-            UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-            btn.frame = CGRectMake(50, 150, 60, 60);
-            btn.layer.cornerRadius = 30;
-            btn.backgroundColor = [UIColor orangeColor];
-            [btn setTitle:@"Momo" forState:UIControlStateNormal];
-            [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-            
-            [keyWindow addSubview:btn];
-            [keyWindow bringSubviewToFront:btn];
-            NSLog(@"[MomoTweak] 图标已成功挂载！");
-        }
-
         %end
         EOF
 
