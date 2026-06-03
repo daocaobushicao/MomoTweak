@@ -28,14 +28,14 @@ jobs:
       run: |
         brew install ldid
 
-    - name: 5. 写入 control
+    - name: 5. 写入 control (修正架构为 iphoneos-arm)
       run: |
         cat << 'EOF' > control
         Package: com.wemomo.momoappdemo1.tweak
         Name: MomoFloatingButton
         Depends: mobilesubstrate
         Version: 0.0.1
-        Architecture: iphoneos-arm64
+        Architecture: iphoneos-arm
         Description: Momo App 悬浮窗插件 (系统层兼容版)
         Maintainer: daocaobushicao
         Author: daocaobushicao
@@ -58,18 +58,44 @@ jobs:
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
-    - name: 7. 写入 MomoFloatingButton.plist (包名死锁)
+    - name: 7. 写入 MomoFloatingButton.plist
       run: |
         cat << 'EOF' > MomoFloatingButton.plist
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1" ); }; }
         EOF
 
-    - name: 8. 写入 Tweak.x (底层核心类注入 - 强袭版)
+    - name: 8. 写入 Tweak.x (底层核心类注入 + 基础反风控)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
+        #import <sys/stat.h>
 
-        // 自定义悬浮窗
+        // ==========================================
+        // 🛡️ 核心防风控：阻止陌陌通过常见系统底层文件检测越狱/改机
+        // ==========================================
+        %hookf(int, lstat, const char *path, struct stat *buf) {
+            if (path != NULL) {
+                if (strstr(path, "Cydia") || strstr(path, "MobileSubstrate") || strstr(path, "amg") || strstr(path, "tweak")) {
+                    errno = ENOENT;
+                    return -1;
+                }
+            }
+            return %orig(path, buf);
+        }
+
+        %hookf(int, stat, const char *path, struct stat *buf) {
+            if (path != NULL) {
+                if (strstr(path, "Cydia") || strstr(path, "MobileSubstrate") || strstr(path, "amg") || strstr(path, "tweak")) {
+                    errno = ENOENT;
+                    return -1;
+                }
+            }
+            return %orig(path, buf);
+        }
+
+        // ==========================================
+        // 🎛️ UI 悬浮窗层逻辑
+        // ==========================================
         @interface MomoSystemFloatingWindow : UIWindow
         @property (nonatomic, strong) UIButton *button;
         @end
@@ -79,8 +105,7 @@ jobs:
         - (instancetype)initWithFrame:(CGRect)frame {
             self = [super initWithFrame:frame];
             if (self) {
-                // 强制将层级开到最高，压在所有改机软件和系统 UI 之上
-                self.windowLevel = UIWindowLevelStatusBar + 9999;
+                self.windowLevel = UIWindowLevelStatusBar + 99999;
                 self.backgroundColor = [UIColor clearColor];
                 
                 self.button = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -90,11 +115,6 @@ jobs:
                 [self.button setTitle:@"M" forState:UIControlStateNormal];
                 [self.button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
                 self.button.titleLabel.font = [UIFont boldSystemFontOfSize:20];
-                
-                self.button.layer.shadowColor = [UIColor blackColor].CGColor;
-                self.button.layer.shadowOffset = CGSizeMake(0, 2);
-                self.button.layer.shadowOpacity = 0.4;
-                self.button.layer.shadowRadius = 4;
                 
                 [self.button addTarget:self action:@selector(buttonClicked) forControlEvents:UIControlEventTouchUpInside];
                 UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
@@ -106,7 +126,6 @@ jobs:
         }
 
         - (void)buttonClicked {
-            // 安全弹窗逻辑
             UIWindow *frontWindow = [[[UIApplication sharedApplication] windows] firstObject];
             UIViewController *topController = frontWindow.rootViewController;
             while (topController.presentedViewController) {
@@ -114,7 +133,7 @@ jobs:
             }
 
             UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Momo 助手"
-                                                                           message:@"环境冲突已成功绕过，悬浮球加载成功！"
+                                                                           message:@"成功强行突破风控层，悬浮球加载成功！"
                                                                     preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
             [topController presentViewController:alert animated:YES completion:nil];
@@ -135,13 +154,11 @@ jobs:
 
         static MomoSystemFloatingWindow *globalMomoWindow = nil;
 
-        // 核心修改：放弃对陌陌内部类的Hook，直接Hook苹果系统的 UIApplication
         %hook UIApplication
 
         - (instancetype)init {
             id original = %orig;
             if (original) {
-                // 监听系统自带的通知，App 一准备好就立刻执行
                 [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification 
                                                                   object:nil 
                                                                    queue:[NSOperationQueue mainQueue] 
@@ -149,11 +166,11 @@ jobs:
                     if (!globalMomoWindow) {
                         UIWindow *keyWin = [[[UIApplication sharedApplication] windows] firstObject];
                         if (keyWin && keyWin.windowScene) {
-                            globalMomoWindow = [[MomoSystemFloatingWindow alloc] initWithFrame:CGRectMake(30, 200, 55, 55)];
+                            globalMomoWindow = [[MomoSystemFloatingWindow alloc] initWithFrame:CGRectMake(30, 250, 55, 55)];
                             globalMomoWindow.windowScene = keyWin.windowScene;
                             globalMomoWindow.rootViewController = [[UIViewController alloc] init];
                             globalMomoWindow.hidden = NO;
-                            NSLog(@"[MomoTweak] 通过系统层成功突破 AMG 改机软件拦截！");
+                            NSLog(@"[MomoTweak] 底层通知触发：强行渲染顶层悬浮窗！");
                         }
                     }
                 }];
