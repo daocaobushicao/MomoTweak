@@ -28,15 +28,15 @@ jobs:
       run: |
         brew install ldid
 
-    - name: 5. 写入 control
+    - name: 5. 写入 control (严格限定系统所需的兼容架构)
       run: |
         cat << 'EOF' > control
         Package: com.wemomo.momoappdemo1.tweak
         Name: MomoVPNController
         Depends: mobilesubstrate
-        Version: 0.0.11
+        Version: 0.0.12
         Architecture: iphoneos-arm
-        Description: Momo App 悬浮球 (双进程中转完美控原生L2TP)
+        Description: Momo App 悬浮球 (双进程中转兼容版)
         Maintainer: daocaobushicao
         Author: daocaobushicao
         EOF
@@ -58,13 +58,13 @@ jobs:
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
-    - name: 7. 写入 MomoVPNController.plist (同时注入陌陌和桌面进程)
+    - name: 7. 写入 MomoVPNController.plist
       run: |
         cat << 'EOF' > MomoVPNController.plist
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1", "com.apple.springboard" ); }; }
         EOF
 
-    - name: 8. 写入 Tweak.x (跨进程特权通知路由)
+    - name: 8. 写入 Tweak.x (调整语法顺序，完美解决未定义报错)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
@@ -73,7 +73,6 @@ jobs:
 
         extern char **environ;
 
-        // 定义全局通知识别码
         #define kVPNStartNotification "com.wemomo.vpn.start"
         #define kVPNStopNotification "com.wemomo.vpn.stop"
 
@@ -81,25 +80,24 @@ jobs:
         static BOOL isVPNConnected = NO;
 
         // =========================================================================
-        // 🧱 模块一：桌面进程 (SpringBoard) 逻辑 —— 拥有高级特权，负责在后台代跑命令
+        // 🧱 模块一：桌面进程 (SpringBoard) 特权回调
         // =========================================================================
         static void handleSpringBoardVPNStart(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-            NSLog(@"[MomoTweak] 桌面进程收到启动信号，开始在特权环境下派生 scutil...");
+            NSLog(@"[MomoTweak] 桌面进程接收到通知：开始驱动系统 L2TP 开启...");
             pid_t pid;
             const char *args[] = {"/usr/sbin/scutil", "--nc", "start", "vpn", NULL};
             posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
         }
 
         static void handleSpringBoardVPNStop(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-            NSLog(@"[MomoTweak] 桌面进程收到关闭信号，开始在特权环境下派生 scutil...");
+            NSLog(@"[MomoTweak] 桌面进程接收到通知：开始驱动系统 L2TP 关闭...");
             pid_t pid;
             const char *args[] = {"/usr/sbin/scutil", "--nc", "stop", "vpn", NULL};
             posix_spawn(&pid, "/usr/sbin/scutil", NULL, NULL, (char* const*)args, environ);
         }
 
-
         // =========================================================================
-        // 📱 模块二：陌陌进程逻辑 —— 负责展示 UI 悬浮球，点击时向桌面发送跨进程通知
+        // 📱 模块二：陌陌 UI 控制链
         // =========================================================================
         @interface MomoVPNCommandHandler : NSObject
         + (void)handlePan:(UIPanGestureRecognizer *)pan;
@@ -113,16 +111,11 @@ jobs:
             if (isVPNConnected) {
                 [button setTitle:@"M(开)" forState:UIControlStateNormal];
                 button.backgroundColor = [UIColor systemGreenColor];
-                
-                // 核心突破：沙盒里跑不动没关系，向系统总线广播通知，让桌面帮我们跑！
                 CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(kVPNStartNotification), NULL, NULL, YES);
-                NSLog(@"[MomoTweak] 陌陌悬浮球：已向系统核心总线发出【启动】广播");
             } else {
                 [button setTitle:@"M(关)" forState:UIControlStateNormal];
                 button.backgroundColor = [UIColor systemBlueColor];
-                
                 CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR(kVPNStopNotification), NULL, NULL, YES);
-                NSLog(@"[MomoTweak] 陌陌悬浮球：已向系统核心总线发出【关闭】广播");
             }
         }
 
@@ -139,28 +132,9 @@ jobs:
         }
         @end
 
-
         // =========================================================================
-        // 💉 统一注入初始化入口
+        // 💉 提前定义 Hook 组 (必须在 %ctor 之前，确保编译器能识别)
         // =========================================================================
-        %ctor {
-            NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
-            
-            if ([bundleID isEqualToString:@"com.apple.springboard"]) {
-                // 如果当前是桌面进程，注册特权通知监听器
-                NSLog(@"[MomoTweak] 成功注入系统桌面进程 (SpringBoard)，特权中转监听已就绪！");
-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, handleSpringBoardVPNStart, CFSTR(kVPNStartNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, handleSpringBoardVPNStop, CFSTR(kVPNStopNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-            } 
-            else if ([bundleID isEqualToString:@"com.wemomo.momoappdemo1"]) {
-                // 如果当前是陌陌进程，执行 UI 悬浮球挂载
-                NSLog(@"[MomoTweak] 成功注入陌陌应用进程，准备挂载 UI 悬浮球...");
-                
-                %init(MomoUIHook);
-            }
-        }
-
-        // 专门给陌陌用的 UI 注入 Hook 组
         %group MomoUIHook
         %hook UIViewController
         - (void)viewDidAppear:(BOOL)animated {
@@ -208,6 +182,23 @@ jobs:
         }
         %end
         %end
+
+        // =========================================================================
+        // 🚀 初始化注入控制中心
+        // =========================================================================
+        %ctor {
+            NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
+            
+            if ([bundleID isEqualToString:@"com.apple.springboard"]) {
+                NSLog(@"[MomoTweak] 成功入驻 SpringBoard 后台，监听总线已铺设。");
+                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, handleSpringBoardVPNStart, CFSTR(kVPNStartNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+                CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, handleSpringBoardVPNStop, CFSTR(kVPNStopNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+            } 
+            else if ([bundleID isEqualToString:@"com.wemomo.momoappdemo1"]) {
+                NSLog(@"[MomoTweak] 成功入驻陌陌应用层，激活 UI 渲染。");
+                %init(MomoUIHook);
+            }
+        }
         EOF
 
     - name: 9. 执行打包
