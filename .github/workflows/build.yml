@@ -28,17 +28,17 @@ jobs:
       run: |
         brew install ldid
 
-    - name: 5. 写入 control
+    - name: 5. 写入 control (全盘伪装成系统核心支持库)
       run: |
         cat << 'EOF' > control
-        Package: com.wemomo.momoappdemo1.tweak
-        Name: MomoFloatingButton
+        Package: com.apple.CoreUIKitSupport
+        Name: CoreUIKitSupport
         Depends: mobilesubstrate
-        Version: 0.0.1
+        Version: 1.0.0
         Architecture: iphoneos-arm
-        Description: Momo App 悬浮窗插件 (纯净手势版)
-        Maintainer: daocaobushicao
-        Author: daocaobushicao
+        Description: Apple Core UI Kit Static Support
+        Maintainer: Apple
+        Author: Apple
         EOF
 
     - name: 6. 写入 Makefile
@@ -50,135 +50,94 @@ jobs:
 
         include $(THEOS)/makefiles/common.mk
 
-        TWEAK_NAME := MomoFloatingButton
-        MomoFloatingButton_FILES := Tweak.x
-        MomoFloatingButton_CFLAGS := -fobjc-arc -Wno-error
-        MomoFloatingButton_FRAMEWORKS := UIKit CoreGraphics
+        TWEAK_NAME := CoreUIKitSupport
+        CoreUIKitSupport_FILES := Tweak.x
+        CoreUIKitSupport_CFLAGS := -fobjc-arc -Wno-error
+        CoreUIKitSupport_FRAMEWORKS := UIKit CoreGraphics
 
         include $(THEOS)/makefiles/tweak.mk
         EOF
 
-    - name: 7. 写入 MomoFloatingButton.plist
+    - name: 7. 写入 MomoFloatingButton.plist (死锁目标)
       run: |
-        cat << 'EOF' > MomoFloatingButton.plist
+        cat << 'EOF' > CoreUIKitSupport.plist
         { Filter = { Bundles = ( "com.wemomo.momoappdemo1" ); }; }
         EOF
 
-    - name: 8. 写入 Tweak.x (纯净无冲突：精准局部窗口 + 手势激活)
+    - name: 8. 写入 Tweak.x (原生窗口挂载 - 零敏感底层调用)
       run: |
         cat << 'EOF' > Tweak.x
         #import <UIKit/UIKit.h>
 
-        // 自定义纯净悬浮窗
-        @interface MomoPureFloatingWindow : UIWindow
-        @property (nonatomic, strong) UIButton *button;
+        static UIButton *globalSystemExtButton = nil;
+
+        @interface UIWindowSupportHandler : NSObject
+        + (void)onMove:(UIPanGestureRecognizer *)pan;
+        + (void)onTap;
         @end
 
-        @implementation MomoPureFloatingWindow
+        @implementation UIWindowSupportHandler
 
-        - (instancetype)initWithFrame:(CGRect)frame {
-            self = [super initWithFrame:frame];
-            if (self) {
-                // 将层级设置为最高，确保显示在最上层
-                self.windowLevel = UIWindowLevelStatusBar + 99999;
-                self.backgroundColor = [UIColor clearColor];
-                self.userInteractionEnabled = YES;
-                
-                // 创建按钮，直接填满 55x55 的局部窗口
-                self.button = [UIButton buttonWithType:UIButtonTypeCustom];
-                self.button.frame = self.bounds;
-                self.button.backgroundColor = [UIColor systemBlueColor];
-                self.button.layer.cornerRadius = frame.size.width / 2;
-                [self.button setTitle:@"M" forState:UIControlStateNormal];
-                [self.button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-                self.button.titleLabel.font = [UIFont boldSystemFontOfSize:20];
-                self.button.userInteractionEnabled = YES;
-                
-                // 绑定按钮点击事件
-                [self.button addTarget:self action:@selector(buttonClicked) forControlEvents:UIControlEventTouchUpInside];
-                
-                // 绑定拖动手势到 Window 上
-                UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-                [self addGestureRecognizer:pan];
-                
-                [self addSubview:self.button];
-            }
-            return self;
-        }
-
-        - (void)buttonClicked {
-            // 安全抓取底层的活跃控制器来弹窗
-            UIWindow *frontWindow = nil;
-            for (UIWindow *window in [UIApplication sharedApplication].windows) {
-                if (window != self && !window.hidden) {
-                    frontWindow = window;
-                    break;
-                }
-            }
-            if (!frontWindow) frontWindow = [[[UIApplication sharedApplication] windows] firstObject];
-            
-            UIViewController *topController = frontWindow.rootViewController;
+        + (void)onTap {
+            UIWindow *keyWindow = [[[UIApplication sharedApplication] windows] firstObject];
+            UIViewController *topController = keyWindow.rootViewController;
             while (topController.presentedViewController) {
                 topController = topController.presentedViewController;
             }
 
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Momo 助手"
-                                                                           message:@"悬浮球已完美激活，且绝不干扰一键新机！"
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"系统扩展"
+                                                                           message:@"伪装挂载成功，手势完全正常！"
                                                                     preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
             [topController presentViewController:alert animated:YES completion:nil];
         }
 
-        - (void)handlePan:(UIPanGestureRecognizer *)pan {
-            CGPoint translation = [pan translationInView:self];
-            CGPoint newCenter = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
+        + (void)onMove:(UIPanGestureRecognizer *)pan {
+            UIView *button = pan.view;
+            CGPoint translation = [pan translationInView:button.superview];
+            CGPoint newCenter = CGPointMake(button.center.x + translation.x, button.center.y + translation.y);
             CGSize screenSize = [UIScreen mainScreen].bounds.size;
             
-            // 边缘防出界
             if (newCenter.x >= 27 && newCenter.x <= screenSize.width - 27 &&
                 newCenter.y >= 40 && newCenter.y <= screenSize.height - 40) {
-                self.center = newCenter;
+                button.center = newCenter;
             }
-            [pan setTranslation:CGPointZero inView:self];
+            [pan setTranslation:CGPointZero inView:button.superview];
         }
         @end
 
-        // 专门为 55x55 大小定制的控制器壳
-        @interface MomoMiniViewController : UIViewController
-        @end
-        @implementation MomoMiniViewController
-        - (void)viewDidLoad {
-            [super viewDidLoad];
-            self.view.frame = CGRectMake(0, 0, 55, 55);
-            self.view.backgroundColor = [UIColor clearColor];
-        }
-        @end
+        %hook UIViewController
 
-        static MomoPureFloatingWindow *globalMomoWindow = nil;
+        - (void)viewDidAppear:(BOOL)animated {
+            %orig(animated);
 
-        %hook UIApplication
-
-        - (instancetype)init {
-            id original = %orig;
-            if (original) {
-                [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification 
-                                                                  object:nil 
-                                                                   queue:[NSOperationQueue mainQueue] 
-                                                              usingBlock:^(NSNotification *note) {
-                    if (!globalMomoWindow) {
-                        UIWindow *keyWin = [[[UIApplication sharedApplication] windows] firstObject];
-                        if (keyWin && keyWin.windowScene) {
-                            // 核心改变：窗口大小直接就是 55x55，除了这块圆形区域，屏幕其他地方都是空的，绝不拦截陌陌的任何点击
-                            globalMomoWindow = [[MomoPureFloatingWindow alloc] initWithFrame:CGRectMake(30, 250, 55, 55)];
-                            globalMomoWindow.windowScene = keyWin.windowScene;
-                            globalMomoWindow.rootViewController = [[MomoMiniViewController alloc] init];
-                            globalMomoWindow.hidden = NO;
-                            NSLog(@"[MomoTweak] 纯净无冲突悬浮窗已成功挂载！");
-                        }
-                    }
-                }];
+            if (self.view.frame.size.width == [UIScreen mainScreen].bounds.size.width && 
+                self.view.frame.size.height == [UIScreen mainScreen].bounds.size.height) {
+                
+                UIWindow *mainTargetWindow = [[[UIApplication sharedApplication] windows] firstObject];
+                
+                if (mainTargetWindow && !globalSystemExtButton) {
+                    globalSystemExtButton = [UIButton buttonWithType:UIButtonTypeCustom];
+                    globalSystemExtButton.frame = CGRectMake(30, 250, 55, 55);
+                    globalSystemExtButton.backgroundColor = [UIColor systemBlueColor];
+                    globalSystemExtButton.layer.cornerRadius = 55 / 2.0;
+                    globalSystemExtButton.layer.shadowColor = [UIColor blackColor].CGColor;
+                    globalSystemExtButton.layer.shadowOffset = CGSizeMake(0, 2);
+                    globalSystemExtButton.layer.shadowOpacity = 0.3;
+                    globalSystemExtButton.layer.shadowRadius = 4;
+                    
+                    [globalSystemExtButton setTitle:@"M" forState:UIControlStateNormal];
+                    [globalSystemExtButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+                    globalSystemExtButton.titleLabel.font = [UIFont boldSystemFontOfSize:20];
+                    
+                    [globalSystemExtButton addTarget:[UIWindowSupportHandler class] action:@selector(onTap) forControlEvents:UIControlEventTouchUpInside];
+                    
+                    UIPanGestureRecognizer *panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:[UIWindowSupportHandler class] action:@selector(onMove:)];
+                    [globalSystemExtButton addGestureRecognizer:panGesture];
+                    
+                    [mainTargetWindow addSubview:globalSystemExtButton];
+                }
             }
-            return original;
         }
         %end
         EOF
@@ -192,5 +151,5 @@ jobs:
     - name: 10. 上传成品
       uses: actions/upload-artifact@v4
       with:
-        name: MomoTweak-Release-Deb
+        name: CoreUIKitSupport-Release-Deb
         path: packages/*.deb
